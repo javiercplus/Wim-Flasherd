@@ -4,7 +4,8 @@ winusb.py - Create a bootable Windows installation USB drive from Linux.
 
 Steps automated by this tool:
   1. Detect connected storage devices, then identify and unmount the target
-  2. Partition (MBR, one primary NTFS partition, bootable flag) and format it
+  2. Clean the device with dd, partition (MBR, one primary NTFS
+     partition, bootable flag) and format it
   3. Write boot records with ms-sys (MBR and PBR)
   4. Mount the ISO and copy its contents to the USB
   5. Sync and clean up
@@ -23,7 +24,7 @@ import sys
 import tempfile
 import time
 
-REQUIRED_TOOLS = ["lsblk", "sfdisk", "wipefs", "mkfs.ntfs", "ms-sys",
+REQUIRED_TOOLS = ["lsblk", "sfdisk", "dd", "mkfs.ntfs", "ms-sys",
                   "mount", "umount", "sync"]
 
 # Column sets for lsblk, from newest to oldest util-linux versions.
@@ -70,7 +71,7 @@ def check_environment():
         print("Missing required tools: " + ", ".join(missing))
         print("Hints:")
         print("  - mkfs.ntfs is provided by the ntfs-3g package")
-        print("  - sfdisk and wipefs come from util-linux")
+        print("  - sfdisk comes from util-linux, dd from coreutils")
         print("  - ms-sys is available on SourceForge or via yay on Arch")
         sys.exit(1)
 
@@ -264,12 +265,30 @@ def unmount_all(device_path, dry_run):
             run(["umount", parts[0]], dry_run, check=False)
 
 
-def partition_and_format(device_path, label, dry_run):
-    """Wipe the device, create one bootable NTFS partition and format it."""
-    log("Creating MBR partition table with one bootable NTFS partition")
-    # Remove old filesystem signatures so stale metadata does not interfere
-    run(["wipefs", "-a", device_path], dry_run)
+def wipe_device(device_path, size_bytes, dry_run):
+    """Zero the start and end of the device with dd to clear old metadata."""
+    wipe_mib = 16
+    total_mib = size_bytes // (1024 * 1024)
 
+    # Start of the disk: MBR, GPT header and the first filesystem signatures
+    log(f"Cleaning the first {wipe_mib} MiB of {device_path} with dd")
+    run(["dd", "if=/dev/zero", f"of={device_path}", "bs=1M",
+         f"count={wipe_mib}", "conv=fsync", "status=none"], dry_run)
+
+    # End of the disk: GPT backup header and trailing signatures
+    if total_mib > wipe_mib * 2:
+        log(f"Cleaning the last {wipe_mib} MiB of {device_path} with dd")
+        run(["dd", "if=/dev/zero", f"of={device_path}", "bs=1M",
+             f"seek={total_mib - wipe_mib}", f"count={wipe_mib}",
+             "conv=fsync", "status=none"], dry_run)
+
+
+def partition_and_format(device_path, size_bytes, label, dry_run):
+    """Clean the device, create one bootable NTFS partition and format it."""
+    # Remove old partition tables and filesystem signatures with dd
+    wipe_device(device_path, size_bytes, dry_run)
+
+    log("Creating MBR partition table with one bootable NTFS partition")
     # sfdisk script: DOS label, one partition using all space,
     # type 7 (HPFS/NTFS/exFAT), bootable flag set (*)
     script = "label: dos\n,,7,*\n"
@@ -428,7 +447,8 @@ def main():
         # Step 1: unmount
         unmount_all(device_path, args.dry_run)
         # Step 2: partition and format
-        part_path = partition_and_format(device_path, args.label, args.dry_run)
+        part_path = partition_and_format(device_path, dev["size"], args.label,
+                                        args.dry_run)
         # Step 3: boot records
         write_boot_records(device_path, part_path, args.dry_run)
         # Step 4: copy installer files
