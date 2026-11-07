@@ -233,10 +233,10 @@ def choose_device(show_all):
 
 
 def confirm_erase(dev):
-    """Require the user to type the device path to confirm destruction of data."""
+    """Require the user to type 'yes' to confirm destruction of data."""
     print(f"\nALL DATA ON {dev['path']} WILL BE DESTROYED.")
-    answer = input(f"Type the device path ({dev['path']}) to confirm: ").strip()
-    if answer != dev["path"]:
+    answer = input("Type yes to confirm: ").strip().lower()
+    if answer != "yes":
         sys.exit("Confirmation did not match. Aborting.")
 
 
