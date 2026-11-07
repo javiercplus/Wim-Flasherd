@@ -1,0 +1,14 @@
+# winusb.py uses only the Python standard library (Python 3.8 or newer).
+# There are no packages to install with pip, so this file is intentionally
+# free of dependencies. Running "pip install -r requirements.txt" is safe
+# and does nothing.
+#
+# System tools required (install with your distribution package manager):
+#   util-linux  -> lsblk, sfdisk, wipefs, mount, umount
+#   ntfs-3g     -> mkfs.ntfs
+#   ms-sys      -> boot records (SourceForge, or "yay -S ms-sys" on Arch)
+#   parted      -> partprobe (optional, recommended)
+#
+# Examples:
+#   Debian/Ubuntu: sudo apt install util-linux ntfs-3g parted
+#   Arch/Void:     sudo pacman -S util-linux ntfs-3g parted   (xbps-install on Void)
