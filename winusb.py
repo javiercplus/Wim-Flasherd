@@ -251,18 +251,47 @@ def first_partition(device_path):
     return device_path + "1"
 
 
-def unmount_all(device_path, dry_run):
-    """Unmount every mounted partition that belongs to the device."""
-    log(f"Unmounting all partitions of {device_path}")
+def mounted_partitions(device_path):
+    """Return (partition, mountpoint) pairs currently mounted for the device."""
     # -p prints full device paths, -l avoids the tree drawing characters
     out = subprocess.run(
         ["lsblk", "-lnp", "-o", "NAME,MOUNTPOINT", device_path],
         text=True, capture_output=True,
     ).stdout
+    pairs = []
     for line in out.splitlines():
         parts = line.split(None, 1)
         if len(parts) == 2:
-            run(["umount", parts[0]], dry_run, check=False)
+            pairs.append((parts[0], parts[1].strip()))
+    return pairs
+
+
+def unmount_all(device_path, dry_run, attempts=3):
+    """Unmount every partition of the device and verify nothing stays mounted.
+
+    Desktop automounters can remount a partition right after it is released,
+    so the check is repeated a few times before giving up.
+    """
+    log(f"Unmounting all partitions of {device_path}")
+    for _ in range(attempts):
+        mounted = mounted_partitions(device_path)
+        if not mounted:
+            return
+        for part, _mountpoint in mounted:
+            run(["umount", part], dry_run, check=False)
+        if dry_run:
+            return
+        # Give udev a moment to settle before checking again
+        subprocess.run(["udevadm", "settle"], capture_output=True)
+        time.sleep(1)
+
+    leftover = mounted_partitions(device_path)
+    if leftover and not dry_run:
+        names = ", ".join(f"{part} ({mp})" for part, mp in leftover)
+        raise StepError(
+            f"Could not unmount: {names}. Close any program using the "
+            "device (file manager, terminal) and try again."
+        )
 
 
 def wipe_device(device_path, size_bytes, dry_run):
@@ -303,6 +332,9 @@ def partition_and_format(device_path, size_bytes, label, dry_run):
         subprocess.run(["partprobe", device_path], capture_output=True)
         subprocess.run(["udevadm", "settle"], capture_output=True)
         time.sleep(2)
+
+    # The desktop may automount the new partition; release it before mkfs
+    unmount_all(device_path, dry_run)
 
     part = first_partition(device_path)
     log(f"Formatting {part} as NTFS (label: {label})")
@@ -444,7 +476,7 @@ def main():
     device_path = dev["path"]
 
     try:
-        # Step 1: unmount
+        # Step 1: unmount everything before touching the device
         unmount_all(device_path, args.dry_run)
         # Step 2: partition and format
         part_path = partition_and_format(device_path, dev["size"], args.label,
